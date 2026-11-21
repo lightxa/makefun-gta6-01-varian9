@@ -1,53 +1,75 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+// Keyboard input: a live set of held keys plus edge-triggered actions (E, F, J,
+// Enter, Escape) that fire once per press, so the world never sees a held key as
+// a repeated action.
+export const ACTION_ENTER_CAR = 'enterCar';
+export const ACTION_PUNCH = 'punch';
+export const ACTION_DISPATCH = 'dispatch';
+export const ACTION_CONFIRM = 'confirm';
+export const ACTION_PAUSE = 'pause';
+export const ACTION_MUTE = 'mute';
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
-
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
+const KEY_ACTIONS = {
+  KeyE: ACTION_ENTER_CAR,
+  KeyF: ACTION_PUNCH,
+  KeyJ: ACTION_DISPATCH,
+  Enter: ACTION_CONFIRM,
+  Space: ACTION_CONFIRM,
+  Escape: ACTION_PAUSE,
+  KeyP: ACTION_PAUSE,
+  KeyM: ACTION_MUTE,
+};
 
 export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
+  const held = new Set();
+  const pressed = new Set();
+  let attached = true;
 
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
-  });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
-  window.addEventListener('blur', () => {
-    left = false;
-    right = false;
-  });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
-  });
+  function onKeyDown(event) {
+    if (event.repeat) return;
+    held.add(event.code);
+    const action = KEY_ACTIONS[event.code];
+    if (action) pressed.add(action);
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) {
+      event.preventDefault();
+    }
+  }
+  function onKeyUp(event) {
+    held.delete(event.code);
+  }
+  function onBlur() {
+    held.clear();
+  }
+  target.addEventListener('keydown', onKeyDown);
+  target.addEventListener('keyup', onKeyUp);
+  target.addEventListener('blur', onBlur);
 
   return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
+    held,
+    /** True while any of the given key codes is held down. */
+    isDown(...codes) {
+      return codes.some((code) => held.has(code));
     },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
+    /** Edge-triggered actions pressed since the last read; reading clears them. */
+    takePressed() {
+      const out = new Set(pressed);
+      pressed.clear();
+      return out;
+    },
+    /** Test and shot drivers inject a synthetic action without a real key. */
+    injectAction(action) {
+      pressed.add(action);
+    },
+    /** Test and shot drivers inject held keys without a real keyboard. */
+    injectHeld(code, down) {
+      if (down) held.add(code);
+      else held.delete(code);
+    },
+    detach() {
+      if (!attached) return;
+      attached = false;
+      target.removeEventListener('keydown', onKeyDown);
+      target.removeEventListener('keyup', onKeyUp);
+      target.removeEventListener('blur', onBlur);
     },
   };
 }
